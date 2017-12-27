@@ -140,12 +140,8 @@
 %% convert every path into a binary internally, for the sake of
 %% comparisons, and return it to the caller for reference.
 %%
-%% @type filename() = binary() | atom() | [char() | filename()]. This is
-%% an "extended IO-list", that allows atoms as well as binaries to occur
-%% either on their own or embedded in a list or deep list. The intent of
-%% this is to accept any file name that can be used by the standard
-%% library module `file', as well as any normal IO-list, and any list
-%% that is formed by combining such fragments.
+%% @type filename_all() = binary() | [char() | filename()]. This is
+%% an IO-list.
 %%
 %% @type options() = [term()]. A list of options.
 %%
@@ -159,7 +155,7 @@
 -define(SERVER, ?MODULE).
 -define(MSGTAG, ?SERVER).
 
-%% % @type object() = {file|directory, filename()}
+%% % @type object() = {file|directory, filename_all()}
 %% @type monitor() = reference(). A monitor reference.
 
 -record(state, {poll=true,  % boolean(), false if polling is disabled
@@ -190,19 +186,19 @@
 %% User interface
 %%
 
-%% @spec (filename()) ->
+%% @spec (filename_all()) ->
 %%         {ok, monitor(), binary()} | {error, not_owner | automonitor}
 %% @equiv monitor_file(Path, [])
 monitor_file(Path) ->
     monitor_file(Path, []).
 
-%% @spec (filename(), options()) ->
+%% @spec (filename_all(), options()) ->
 %%         {ok, monitor(), binary()} | {error, not_owner | automonitor}
 %% @equiv monitor_file(file_monitor, Path, Opts)
 monitor_file(Path, Opts) ->
     monitor_file(?SERVER, Path, Opts).
 
-%% @spec (server_ref(), filename(), options()) ->
+%% @spec (server_ref(), filename_all(), options()) ->
 %%         {ok, monitor(), binary()} | {error, not_owner | automonitor}
 %% @doc Monitors the specified file path. Returns the monitor reference
 %% as well as the monitored path as a binary.
@@ -218,19 +214,19 @@ monitor_file(Path, Opts) ->
 monitor_file(Server, Path, Opts) ->
     monitor(Server, Path, Opts, file).
 
-%% @spec (filename()) ->
+%% @spec (filename_all()) ->
 %%         {ok, monitor(), binary()} | {error, not_owner | automonitor}
 %% @equiv monitor_dir(Path, [])
 monitor_dir(Path) ->
     monitor_dir(Path, []).
 
-%% @spec (filename(), options()) ->
+%% @spec (filename_all(), options()) ->
 %%         {ok, monitor(), binary()} | {error, not_owner | automonitor}
 %% @equiv monitor_dir(file_monitor, Path, Opts)
 monitor_dir(Path, Opts) ->
     monitor_dir(?SERVER, Path, Opts).
 
-%% @spec (server_ref(), filename(), options()) ->
+%% @spec (server_ref(), filename_all(), options()) ->
 %%         {ok, monitor(), binary()} | {error, not_owner | automonitor}
 %% @doc Monitors the specified directory path. Returns the monitor
 %% reference as well as the monitored path as a binary.
@@ -254,17 +250,17 @@ monitor(Server, Path, Opts, Type) ->
     end.
 
 
-%% @spec (filename()) -> {ok, monitor(), binary()}
+%% @spec (filename_all()) -> {ok, monitor(), binary()}
 %% @equiv automonitor(Path, [])
 automonitor(Path) ->
     automonitor(Path, []).
 
-%% @spec (filename(), options()) -> {ok, monitor(), binary()}
+%% @spec (filename_all(), options()) -> {ok, monitor(), binary()}
 %% @equiv automonitor(file_monitor, Path, Opts)
 automonitor(Path, Opts) ->
     automonitor(?SERVER, Path, Opts).
 
-%% @spec (server_ref(), filename(), options()) -> {ok, monitor(), binary()}
+%% @spec (server_ref(), filename_all(), options()) -> {ok, monitor(), binary()}
 %% @doc Automonitors the specified path. Returns the monitor reference as
 %% well as the monitored path as a binary.
 %%
@@ -286,23 +282,23 @@ demonitor(Ref) ->
 demonitor(Server, Ref) when is_reference(Ref) ->
     ok = gen_server:call(Server, {demonitor, self(), Ref}).
 
-%% @spec (filename(), monitor()) -> ok | {error, not_owner}
+%% @spec (filename_all(), monitor()) -> ok | {error, not_owner}
 %% @equiv demonitor_file(file_monitor, Path, Ref)
 demonitor_file(Path, Ref) ->
     demonitor_file(?SERVER, Path, Ref).
 
-%% @spec (server_ref(), filename(), monitor()) -> ok | {error, not_owner}
+%% @spec (server_ref(), filename_all(), monitor()) -> ok | {error, not_owner}
 %% @doc Removes the file path from the specified monitor. This can only
 %% be done by the process that created the monitor.
 demonitor_file(Server, Path, Ref) ->
     demonitor(Server, Path, Ref, file).
 
-%% @spec (filename(), monitor()) -> ok | {error, not_owner}
+%% @spec (filename_all(), monitor()) -> ok | {error, not_owner}
 %% @equiv demonitor_dir(file_monitor, Path, Ref)
 demonitor_dir(Path, Ref) ->
     demonitor_dir(?SERVER, Path, Ref).
 
-%% @spec (server_ref(), filename(), monitor()) -> ok | {error, not_owner}
+%% @spec (server_ref(), filename_all(), monitor()) -> ok | {error, not_owner}
 %% @doc Removes the directory path from the specified monitor. This can
 %% only be done by the process that created the monitor.
 demonitor_dir(Server, Path, Ref) ->
@@ -495,34 +491,21 @@ terminate(_Reason, _St) ->
 %% Internal functions
 %%
 
-%% We allow paths as binaries, atoms, or "extended io-lists" that may
-%% contain atoms as well as binaries. This is flattened into a single
-%% binary (currently assuming that the input uses an 8-bit encoding).
+%% We allow paths as binaries or io-lists that may
+%% contain utf8 encoded strings, multi-bytes [char()], as well
+%% as binaries, flattened into a binary (currently assuming that
+%% the input uses an 8-bit encoding).
 %% A single character is not a valid path; it must be within a list.
 
-%% @spec (filename()) -> binary()
+%% @spec (filename_all()) -> binary()
 %% @doc Flattens the given path to a single binary.
 
 normalize_path(Path) when is_binary(Path) -> Path;
 normalize_path(Path) ->
-    list_to_binary(flatten_onto(Path, [])).
-
-flatten_onto([X | Xs], As) when is_integer(X), X >= 0, X =< 255 ->
-    [X | flatten_onto(Xs, As)];
-flatten_onto([X | Xs], As) ->
-    flatten_onto(X, flatten_onto(Xs, As));
-flatten_onto([], As) ->
-    As;
-flatten_onto(X, As) when is_atom(X) ->
-    atom_to_list(X) ++ As;
-flatten_onto(X, As) when is_binary(X) ->
-    binary_to_list(X) ++ As;
-flatten_onto(_, _) ->
-    erlang:error(badarg).
+    unicode:characters_to_binary(Path).
 
 join_to_path(Path, File) when is_binary(Path), is_binary(File) ->
-    normalize_path(filename:join(binary_to_list(Path),
-				 binary_to_list(File))).
+    filename:join(Path, File).
 
 safe_interval(N) when is_integer(N) ->
     min(16#FFFFffff, max(N, ?MIN_INTERVAL));
@@ -607,7 +590,7 @@ automonitor_path(Path, Pid, Ref, St) ->
 
 %% see add_monitor for possible thrown exceptions
 unsafe_automonitor_path(Path, Pid, Ref, St) ->
-    Object = case file:read_file_info(binary_to_list(Path)) of
+    Object = case file:read_file_info(Path) of
 		 {ok, #file_info{type=directory}} ->
 		     {directory, Path};
 		 _ ->
@@ -956,7 +939,7 @@ poll_file(Path, Entry, Type, St) ->
 %% directory timestamp.
 
 refresh_entry(Path, Entry, Type, Delta) when is_binary(Path) ->
-    refresh_entry_0(binary_to_list(Path), Entry, Type, Delta,
+    refresh_entry_0(Path, Entry, Type, Delta,
 		    Entry#entry.info).
 
 refresh_entry_0(Path, Entry, Type, Delta, OldInfo) ->
@@ -1016,7 +999,7 @@ refresh_entry_2(Path, Entry, Type, Delta, Info, Stable) ->
 %% We clear some fields of the file_info so that we only trigger on real
 %% changes; see the //kernel/file.erl manual and file.hrl for details.
 
-get_file_info(Path) when is_list(Path) ->
+get_file_info(Path) when is_binary(Path) ->
     case file:read_file_info(Path) of
 	{ok, Info} ->
 	    Info#file_info{access = undefined,
@@ -1028,8 +1011,8 @@ get_file_info(Path) when is_list(Path) ->
 %% Listing the members of a directory; note that it yields the empty
 %% list if it fails - this is not the place for error detection.
 
-list_dir(Path) when is_list(Path) ->
-    Files = case file:list_dir(Path) of
+list_dir(Path) when is_binary(Path) ->
+    Files = case file:list_dir_all(Path) of
 		{ok, Fs} -> [normalize_path(F) || F <- Fs];
 		{error, _} -> []
 	    end,
